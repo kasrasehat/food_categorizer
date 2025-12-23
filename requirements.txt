@@ -1,0 +1,12 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-dotenv>=1.0
+openpyxl>=3.1
+nltk>=3.8
+
+# RAG / Vector DB runtime
+langchain-community>=0.2
+langchain-openai>=0.1
+chromadb>=0.4
+
+

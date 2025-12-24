@@ -7,7 +7,12 @@ from typing import List, Tuple
 from utils.categorizer import _extract_food_name
 
 
-_EN_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9']*")
+# Tokenizer for "English-ish" text extraction.
+# Include:
+# - words starting with a letter (e.g. "Americano", "XLarge")
+# - numeric tokens, optionally followed by letters (e.g. "12", "12.5", "12oz")
+# This is used by `extract_english_part()` and `detect_language()`.
+_EN_TOKEN_RE = re.compile(r"(?:[A-Za-z][A-Za-z0-9']*|\d+(?:\.\d+)?(?:[A-Za-z]+)?)")
 _HAS_NON_ASCII_LETTER_RE = re.compile(r"[^\x00-\x7F]")
 
 # Script detection (fast, no models needed)

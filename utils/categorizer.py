@@ -21,6 +21,18 @@ _UNITS_RE = re.compile(
     re.IGNORECASE,
 )
 
+_SIZES_RE = re.compile(
+    r"\b("
+    r"xs|s|sm|small|"
+    r"m|md|medium|"
+    r"l|lg|large|"
+    r"xl|x\-?l|xxl|2xl|3xl|"
+    r"xlarge|x\-?large|extra\s+large|"
+    r"regular|reg"
+    r")\b",
+    re.IGNORECASE,
+)
+
 
 def _extract_food_name(text: str) -> str:
     """
@@ -39,10 +51,13 @@ def _extract_food_name(text: str) -> str:
 
     # Drop numeric quantities / separators
     s = re.sub(r"\b\d+(?:\.\d+)?\b", " ", s)
-    s = s.replace("x", " ")
+    # s = s.replace("x", " ")
 
     # Remove units
     s = _UNITS_RE.sub(" ", s)
+
+    # Remove common size descriptors (often appear in beverages/menus)
+    s = _SIZES_RE.sub(" ", s)
 
     # Keep letters, digits, spaces, hyphens; collapse whitespace
     s = re.sub(r"[^\w\s\-]", " ", s)

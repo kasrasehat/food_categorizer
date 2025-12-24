@@ -46,14 +46,14 @@ def _write_tabular(file_kind: str, fieldnames: List[str], rows: List[Dict[str, A
 @router.post("/process-file")
 async def process_file(
     file: UploadFile = File(...),
-    rag_llm_model: Optional[str] = Query(
-        default=None,
-        description="LLM model name/alias for translation (e.g., gpt-4o-mini, gpt4o-mini, gpt5-low).",
-    ),
-    translate_with_llm: bool = Query(
-        default=True,
-        description="If true, non-English names (or names without any English tokens) are translated via LLM.",
-    ),
+    # rag_llm_model: Optional[str] = Query(
+    #     default=None,
+    #     description="LLM model name/alias for translation (e.g., gpt-4o-mini, gpt4o-mini, gpt5-low).",
+    # ),
+    # translate_with_llm: bool = Query(
+    #     default=True,
+    #     description="If true, non-English names (or names without any English tokens) are translated via LLM.",
+    # ),
 ) -> StreamingResponse:
     """
     Upload CSV/XLSX containing ACTUAL_PRODUCT_NAME column.
@@ -99,6 +99,8 @@ async def process_file(
         raw_names
     )
 
+    rag_llm_model = "gpt-4o-mini"
+    translate_with_llm = True
     # Translate only when needed
     if translate_with_llm and translation_texts:
         # cfg format is used to match user's snippet style

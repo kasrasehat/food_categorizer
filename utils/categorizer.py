@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 from collections import Counter
+from difflib import SequenceMatcher
 from typing import Optional, List
 from langchain_community.vectorstores import Chroma
 
@@ -77,6 +78,66 @@ def _mmr_search_by_vector(
     return list(docs)
 
 
+def similarity_score(a: str, b: str) -> float:
+    """
+    Similarity between two words/phrases, returned as a float in [0, 1].
+
+    Uses a mix of:
+    - SequenceMatcher ratio over normalized strings (handles typos/order a bit)
+    - token Jaccard similarity (handles extra/missing tokens)
+
+    This is intentionally dependency-free (no rapidfuzz).
+    """
+    a_norm = a
+    b_norm = b
+
+    if not a_norm or not b_norm:
+        return 0.0
+    if a_norm == b_norm:
+        return 1.0
+
+    # Character-level similarity
+    char_sim = SequenceMatcher(None, a_norm, b_norm).ratio()
+
+    # Token-level similarity
+    a_toks = [t for t in a_norm.split() if t]
+    b_toks = [t for t in b_norm.split() if t]
+    a_set = set(a_toks)
+    b_set = set(b_toks)
+    if not a_set or not b_set:
+        tok_sim = 0.0
+    else:
+        tok_sim = len(a_set & b_set) / float(len(a_set | b_set))
+
+    # Weighted blend; keep in [0, 1]
+    score = 0.65 * char_sim + 0.35 * tok_sim
+    if score < 0.0:
+        return 0.0
+    if score > 1.0:
+        return 1.0
+    return float(score)
+
+
+def _prob_from_best_rank_in_category(q: str, docs: list, category: str) -> float:
+    """
+    No-extra-DB-call probability:
+    Find the earliest (highest-ranked) retrieved doc that belongs to the predicted `category`
+    and return `similarity_score(q, doc.page_content)` in [0, 1].
+    """
+    if not docs or not category:
+        return 0.0
+
+    prob = 0.0
+    for i, d in enumerate(docs):
+        meta = getattr(d, "metadata", None) or {}
+        if meta.get("group") == category:
+            # The actual matched text is on the Document itself, not in metadata
+            prob = similarity_score(q, getattr(d, "page_content", "") or "")
+            return prob
+
+    return prob
+
+
 def categorize_food_text(text: str) -> dict:
     """
     Categorize a food label using your vector DB (Chroma) + voting.
@@ -98,7 +159,7 @@ def categorize_food_text(text: str) -> dict:
         return {"category": "other", "probability": 0.0}
 
     vectordb_state = get_vectordb_state()
-    k = 17
+    k = 13
     fetch_k = 13
 
     if k is None:
@@ -172,7 +233,7 @@ def categorize_food_text(text: str) -> dict:
 
     counts = Counter(categories)
     best_cat, best_count = counts.most_common(1)[0]
-    prob = best_count / float(len(top_for_vote))
+    prob = _prob_from_best_rank_in_category(q, top_for_vote, best_cat)
 
     logger.info(
         "[CATEGORIZE] q=%r vote_k=%d best=%r prob=%.3f counts=%s",
@@ -212,11 +273,12 @@ async def categorize_food_batch(texts: List[str]) -> List[dict]:
     for t in texts:
         if debug:
             logger.info("[CATEGORIZE_BATCH] input_text=%r", t)
-        q = _extract_food_name(t)
+        # q = _extract_food_name(t)
+        q = t
         normalized.append(q)
 
     vectordb_state = get_vectordb_state()
-    k = 17
+    k = 13
     fetch_k = 13
 
     if k is None:
@@ -265,15 +327,6 @@ async def categorize_food_batch(texts: List[str]) -> List[dict]:
         i = idxs[local_i]
         q = normalized[i]
 
-        if debug:
-            logger.info(
-                "[CATEGORIZE_BATCH] normalized_query=%r k=%s fetch_k=%s vote_k=%s",
-                q,
-                k,
-                fetch_k,
-                vote_k,
-            )
-
         if isinstance(docs_or_exc, Exception):
             logger.warning(
                 "[CATEGORIZE_BATCH] Vector search failed for %r: %s",
@@ -321,7 +374,7 @@ async def categorize_food_batch(texts: List[str]) -> List[dict]:
 
         counts = Counter(categories)
         best_cat, best_count = counts.most_common(1)[0]
-        prob = best_count / float(len(top_for_vote))
+        prob = _prob_from_best_rank_in_category(q, top_for_vote, best_cat)
 
         logger.info(
             "[CATEGORIZE_BATCH] q=%r vote_k=%d best=%r prob=%.3f counts=%s",

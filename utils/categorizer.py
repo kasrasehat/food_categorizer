@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from collections import Counter
@@ -185,5 +186,154 @@ def categorize_food_text(text: str) -> dict:
         "category": best_cat,
         "probability": prob,
     }
+
+
+async def categorize_food_batch(texts: List[str]) -> List[dict]:
+    """
+    Batch version of `categorize_food_text` for lower latency in API endpoints.
+
+    Uses the same flow per item:
+    - extract/normalize a food name from `text`
+    - embed it with `OpenAITextEmbeddings`
+    - retrieve top-N similar foods from vectordb
+    - vote categories across the top-K results
+
+    Returns a list of dicts (same length as `texts`), each with:
+      {"category": str, "probability": float}
+    """
+    debug = True
+
+    results: List[dict] = [{"category": "other", "probability": 0.0} for _ in texts]
+    if not texts:
+        return results
+
+    # Normalize queries first
+    normalized: List[str] = []
+    for t in texts:
+        if debug:
+            logger.info("[CATEGORIZE_BATCH] input_text=%r", t)
+        q = _extract_food_name(t)
+        normalized.append(q)
+
+    vectordb_state = get_vectordb_state()
+    k = 17
+    fetch_k = 13
+
+    if k is None:
+        k = int(os.getenv("TEXT_DEFAULT_K", 17))
+    if fetch_k is None:
+        fetch_k = int(os.getenv("TEXT_DEFAULT_FETCH_K", 13))
+
+    vote_k = max(1, fetch_k)
+
+    # Only embed/search non-empty queries
+    idxs: List[int] = [i for i, q in enumerate(normalized) if q]
+    if not idxs:
+        return results
+
+    queries: List[str] = [normalized[i] for i in idxs]
+    if debug:
+        logger.info(
+            "[CATEGORIZE_BATCH] batch_size=%d non_empty=%d k=%s fetch_k=%s vote_k=%s",
+            len(texts),
+            len(queries),
+            k,
+            fetch_k,
+            vote_k,
+        )
+
+    try:
+        embeddings: List[List[float]] = await asyncio.to_thread(
+            vectordb_state["text_embedder"].embed_documents, queries
+        )
+    except Exception as e:
+        logger.warning("[CATEGORIZE_BATCH] Embedding failed for batch: %s", e, exc_info=True)
+        return results
+
+    async def _search_one(embedding: List[float]):
+        return await asyncio.to_thread(
+            _mmr_search_by_vector,
+            vectordb_state["text_db"],
+            embedding,
+            int(k),
+            int(fetch_k),
+        )
+
+    docs_list = await asyncio.gather(*[_search_one(emb) for emb in embeddings], return_exceptions=True)
+
+    for local_i, docs_or_exc in enumerate(docs_list):
+        i = idxs[local_i]
+        q = normalized[i]
+
+        if debug:
+            logger.info(
+                "[CATEGORIZE_BATCH] normalized_query=%r k=%s fetch_k=%s vote_k=%s",
+                q,
+                k,
+                fetch_k,
+                vote_k,
+            )
+
+        if isinstance(docs_or_exc, Exception):
+            logger.warning(
+                "[CATEGORIZE_BATCH] Vector search failed for %r: %s",
+                q,
+                docs_or_exc,
+                exc_info=True,
+            )
+            continue
+
+        docs = docs_or_exc
+        if not docs:
+            if debug:
+                logger.info("[CATEGORIZE_BATCH] no_retrieval_results -> fallback other")
+            continue
+
+        top_for_vote = docs[: min(vote_k, len(docs))]
+
+        if debug:
+            logger.info(
+                "[CATEGORIZE_BATCH] retrieved=%d using_for_vote=%d",
+                len(docs),
+                len(top_for_vote),
+            )
+            for j, d in enumerate(top_for_vote[: min(fetch_k, len(top_for_vote))]):
+                page = getattr(d, "page_content", "") or ""
+                meta = getattr(d, "metadata", None) or {}
+                logger.info(
+                    "[CATEGORIZE_BATCH] match[%d] page_content=%r meta_group=%r",
+                    j,
+                    page[:120],
+                    meta.get("group"),
+                )
+
+        categories: list[str] = []
+        for d in top_for_vote:
+            meta = getattr(d, "metadata", None) or {}
+            cat = meta.get("group")
+            if cat:
+                categories.append(cat)
+
+        if not categories:
+            if debug:
+                logger.info("[CATEGORIZE_BATCH] no_categories_in_metadata -> fallback other")
+            continue
+
+        counts = Counter(categories)
+        best_cat, best_count = counts.most_common(1)[0]
+        prob = best_count / float(len(top_for_vote))
+
+        logger.info(
+            "[CATEGORIZE_BATCH] q=%r vote_k=%d best=%r prob=%.3f counts=%s",
+            q,
+            len(top_for_vote),
+            best_cat,
+            prob,
+            dict(counts),
+        )
+
+        results[i] = {"category": best_cat, "probability": prob}
+
+    return results
 
 

@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
+from utils.categorizer import categorize_food_batch
 from utils.llm_translate import translate_to_english_batch
 from utils.product_name_processing import finalize_processed_name, prepare_translation_inputs
 from utils.tabular_io import read_csv_bytes, read_xlsx_bytes, write_csv_bytes, write_xlsx_bytes
@@ -56,7 +57,10 @@ async def process_file(
 ) -> StreamingResponse:
     """
     Upload CSV/XLSX containing ACTUAL_PRODUCT_NAME column.
-    Returns the same file type with all original columns plus `processed_name`.
+    Returns the same file type with all original columns plus:
+    - PROCESSED_PRODUCT_NAME
+    - PRODUCT_LABEL
+    - LABEL_PROBABILITY
     """
     file_kind = _detect_file_kind(file.filename or "", file.content_type)
     if not file_kind:
@@ -81,11 +85,11 @@ async def process_file(
             detail="Missing required column: ACTUAL_PRODUCT_NAME",
         )
 
-    # Ensure output column exists in header list (append at end).
-    if "processed_name" not in fieldnames:
-        out_fieldnames = list(fieldnames) + ["processed_name"]
-    else:
-        out_fieldnames = list(fieldnames)
+    # Ensure output columns exist in header list (append at end).
+    out_fieldnames = list(fieldnames)
+    for col in ("PROCESSED_PRODUCT_NAME", "PRODUCT_LABEL", "LABEL_PROBABILITY"):
+        if col not in out_fieldnames:
+            out_fieldnames.append(col)
 
     raw_names: List[str] = []
     for r in rows:
@@ -119,9 +123,18 @@ async def process_file(
             if not val:
                 initial_processed[i] = finalize_processed_name(raw_names[i])
 
+    # Categorize using *processed* names (not actual names)
+    batch_results = await categorize_food_batch(initial_processed)
+
     # Write back into rows
     for i, r in enumerate(rows):
-        r["processed_name"] = initial_processed[i]
+        r["PROCESSED_PRODUCT_NAME"] = initial_processed[i]
+        res = batch_results[i] if i < len(batch_results) else {}
+        r["PRODUCT_LABEL"] = str(res.get("category", "other"))
+        try:
+            r["LABEL_PROBABILITY"] = float(res.get("probability", 0.0))
+        except Exception:
+            r["LABEL_PROBABILITY"] = 0.0
 
     out_bytes = _write_tabular(file_kind, out_fieldnames, rows)
 

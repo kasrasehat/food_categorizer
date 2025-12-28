@@ -138,10 +138,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--chunks",
-        default="F:/my codes py/food_categorizer/data/food_group.json",
+        default="E:/codes_py/food_categorizer/data/food_group.json",
         help="Path to chunks JSON file (expects a list or dict-of-dicts, like portion.json).",
     )
-    ap.add_argument("--db-dir", default="F:/my codes py/food_categorizer/data/vectordbs/chromadb_food_group", help="Chroma persistence directory.")
+    ap.add_argument("--db-dir", default="E:/codes_py/food_categorizer/data/vectordbs/chromadb_food_group", help="Chroma persistence directory.")
     ap.add_argument("--collection-name", default="food_group", help="Override collection name.")
     ap.add_argument("--index-col", default="name", choices=["Yield Name"],
                     help="Which column to index. If omitted, you will be prompted.")

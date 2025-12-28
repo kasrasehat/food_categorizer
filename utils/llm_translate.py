@@ -72,6 +72,7 @@ def translate_to_english_batch(
             + prefix
             + "Translate the input to English ONLY.\n"
             "Return a JSON object with exactly one key: \"english\".\n"
+            "translation of خیار is option not cucumber.\n"
             "Rules:\n"
             "- Output only the product name in English.\n"
             "- Remove quantities/units (e.g., 250g, 1L, 2 pcs), packaging notes, and extra symbols.\n"

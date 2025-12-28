@@ -1,9 +1,7 @@
 from fastapi import FastAPI
-
 from app.api.v1.router import api_router, lifespan
 from utils.settings import get_settings
 import uvicorn
-
 
 def create_app() -> FastAPI:
     settings = get_settings()
@@ -20,6 +18,6 @@ def create_app() -> FastAPI:
 app = create_app()
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8004)
 
 

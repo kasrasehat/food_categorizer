@@ -9,4 +9,8 @@ langchain-community>=0.2
 langchain-openai>=0.1
 chromadb>=0.4
 
+# File uploads / images
+python-multipart>=0.0.9
+pillow>=10.0.0
+
 

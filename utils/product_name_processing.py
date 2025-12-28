@@ -22,8 +22,25 @@ _HAN_RE = re.compile(r"[\u4E00-\u9FFF]")
 _HIRAGANA_KATAKANA_RE = re.compile(r"[\u3040-\u30FF]")
 _HANGUL_RE = re.compile(r"[\uAC00-\uD7AF]")
 
-# Common mojibake markers for UTF-8 that was decoded as Latin-1/CP1252
-_MOJIBAKE_HINT_RE = re.compile(r"[ÃÂÐÑØÙÝÞ]|â€™|â€œ|â€\x9d")
+# Common mojibake markers:
+# - UTF-8 decoded as Latin-1/CP1252 (ÃÂâ€™…)
+# - UTF-8 Arabic decoded as CP1256 (shows lots of ط/ظ plus Latin-1 symbols like §/…)
+_MOJIBAKE_HINT_RE = re.compile(
+    r"[ÃÂÐÑØÙÝÞ]|â€™|â€œ|â€\x9d|(?:ط[\u00A0-\u00FF])|(?:ظ[\u00A0-\u00FF\u2026])|[\uFFFD]"
+)
+
+
+def _latin_noise_count(s: str) -> int:
+    """
+    Count characters that are strong mojibake signals in this project context:
+    - Latin-1 supplement symbols (§, ¬, etc.) and common punctuation used in mojibake (…)
+    - Unicode replacement char (�)
+
+    This is used to choose between candidate repairs in `fix_mojibake()`.
+    """
+    if not s:
+        return 0
+    return len(re.findall(r"[\u00A0-\u00FF\u2026\uFFFD]", s))
 
 
 def _score_scriptiness(s: str) -> int:
@@ -48,8 +65,11 @@ def fix_mojibake(text: str) -> str:
     if not s:
         return s
 
-    # If it already contains Arabic (or other scripts), don't touch it.
-    if _score_scriptiness(s) > 0:
+    scriptiness = _score_scriptiness(s)
+    # If it already contains non-Latin scripts, only attempt repair when it looks suspicious.
+    # Important: CP1256-mojibake still contains Arabic letters (e.g. "ط§ظ…"), so we can't early-return
+    # purely based on script detection.
+    if scriptiness > 0 and not _MOJIBAKE_HINT_RE.search(s):
         return s
 
     # Only attempt repair when it looks suspicious
@@ -57,7 +77,8 @@ def fix_mojibake(text: str) -> str:
         return s
 
     candidates: List[str] = [s]
-    for src_enc in ("latin-1", "cp1252"):
+    # Include CP1256 for Arabic mojibake like "ط§ظ…"
+    for src_enc in ("latin-1", "cp1252", "cp1256"):
         # latin-1 can always roundtrip bytes 0-255; cp1252 can fail on some controls -> ignore
         enc_errors = "strict" if src_enc == "latin-1" else "ignore"
         try:
@@ -71,13 +92,15 @@ def fix_mojibake(text: str) -> str:
             except Exception:
                 continue
 
-    # Choose the candidate that most increases presence of non-Latin scripts.
+    # Choose the candidate that best reduces mojibake signals.
+    # Primary: minimize Latin-1 / replacement-char noise
+    # Secondary: maximize presence of non-Latin scripts (Arabic/CJK/etc.) when applicable
     best = s
-    best_score = _score_scriptiness(s)
+    best_rank = (_latin_noise_count(s), -_score_scriptiness(s))
     for c in candidates[1:]:
-        sc = _score_scriptiness(c)
-        if sc > best_score:
-            best, best_score = c, sc
+        rank = (_latin_noise_count(c), -_score_scriptiness(c))
+        if rank < best_rank:
+            best, best_rank = c, rank
     return best
 
 
